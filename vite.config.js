@@ -11,9 +11,9 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
       manifest: {
-        name: 'Трекер Гульнур',
-        short_name: 'Гульнур',
-        description: 'Трекер привычек Гульнур',
+        name: 'Gulnur Tracker',
+        short_name: 'Gulnur',
+        description: "Gulnur's habit tracker",
         theme_color: '#0C1526',
         background_color: '#0C1526',
         display: 'standalone',
