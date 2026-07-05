@@ -112,12 +112,15 @@ const VEGGIE_LADDER = [
 ];
 
 const STORAGE_KEY = "gt-data-v1";
+const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0]; // Пн..Вс
+const emptyHabitForm = { id: null, name: "", days: [], min: "" };
 
 export default function GulnurTracker() {
   const [data, setData] = useState(null);
   const [tab, setTab] = useState("today");
   const [ideaText, setIdeaText] = useState("");
   const [saveState, setSaveState] = useState("");
+  const [habitForm, setHabitForm] = useState(null); // null = closed, else emptyHabitForm-shaped
 
   // ---------- load ----------
   useEffect(() => {
@@ -210,6 +213,34 @@ export default function GulnurTracker() {
     persist({ ...data, log });
   };
 
+  const openNewHabit = (prefillName = "") => setHabitForm({ ...emptyHabitForm, name: prefillName });
+  const openEditHabit = (h) => setHabitForm({ id: h.id, name: h.name, days: [...h.days], min: h.min });
+  const closeHabitForm = () => setHabitForm(null);
+  const toggleFormDay = (day) => {
+    setHabitForm((f) => ({
+      ...f,
+      days: f.days.includes(day) ? f.days.filter((d) => d !== day) : [...f.days, day],
+    }));
+  };
+  const saveHabitForm = () => {
+    if (!habitForm.name.trim() || habitForm.days.length === 0) return;
+    const clean = { ...habitForm, name: habitForm.name.trim(), min: habitForm.min.trim() };
+    if (clean.id) {
+      persist({ ...data, habits: data.habits.map((h) => (h.id === clean.id ? { ...h, ...clean } : h)) });
+    } else {
+      persist({ ...data, habits: [...data.habits, { id: `h${Date.now()}`, name: clean.name, days: clean.days, min: clean.min }] });
+    }
+    setHabitForm(null);
+  };
+  const deleteHabit = (id) => {
+    persist({ ...data, habits: data.habits.filter((h) => h.id !== id) });
+  };
+  const convertIdeaToHabit = (idea) => {
+    persist({ ...data, ideas: data.ideas.filter((x) => x.id !== idea.id) });
+    setTab("habits");
+    setHabitForm({ ...emptyHabitForm, name: idea.text });
+  };
+
   const todayHabits = habitsForDate(now);
   const todayDone = todayHabits.filter((h) => data.log[tISO]?.[h.id]).length;
 
@@ -281,6 +312,7 @@ export default function GulnurTracker() {
         {[
           ["today", "Сегодня"],
           ["plan", "План"],
+          ["habits", "Привычки"],
           ["veggie", "Овощи"],
           ["ideas", "Идеи"],
           ["rules", "Правила"],
@@ -352,6 +384,75 @@ export default function GulnurTracker() {
                   {it}
                 </div>
               ))}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* HABITS */}
+      {tab === "habits" && (
+        <div style={S.section}>
+          {habitForm && (
+            <div style={{ ...S.card, borderLeft: "4px solid #FF6A2B" }}>
+              <div style={S.habitName}>{habitForm.id ? "Редактировать привычку" : "Новая привычка"}</div>
+              <input
+                value={habitForm.name}
+                onChange={(e) => setHabitForm({ ...habitForm, name: e.target.value })}
+                placeholder="Название привычки"
+                style={{ ...S.input, width: "100%", marginTop: 10 }}
+              />
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+                {DAY_ORDER.map((day) => (
+                  <button
+                    key={day}
+                    onClick={() => toggleFormDay(day)}
+                    style={{
+                      ...S.dayChip,
+                      background: habitForm.days.includes(day) ? "#FF6A2B" : "transparent",
+                      color: habitForm.days.includes(day) ? "#0C1526" : "#F2F0E9",
+                      borderColor: habitForm.days.includes(day) ? "#FF6A2B" : "#33456B",
+                    }}
+                  >
+                    {DAYS_RU[day]}
+                  </button>
+                ))}
+              </div>
+              <input
+                value={habitForm.min}
+                onChange={(e) => setHabitForm({ ...habitForm, min: e.target.value })}
+                placeholder="Минимальная версия (текст минимума)"
+                style={{ ...S.input, width: "100%", marginTop: 10 }}
+              />
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <button style={S.btn} onClick={saveHabitForm}>
+                  {habitForm.id ? "Сохранить" : "Создать"}
+                </button>
+                <button style={S.btnGhost} onClick={closeHabitForm}>
+                  Отмена
+                </button>
+              </div>
+            </div>
+          )}
+          {!habitForm && (
+            <button style={S.btn} onClick={() => openNewHabit()}>
+              + Новая привычка
+            </button>
+          )}
+          {data.habits.map((h) => (
+            <div key={h.id} style={S.card}>
+              <div style={S.habitName}>{h.name}</div>
+              <div style={{ ...S.minText, marginTop: 4 }}>
+                Дни: {DAY_ORDER.filter((d) => h.days.includes(d)).map((d) => DAYS_RU[d]).join(", ") || "—"}
+              </div>
+              {h.min && <div style={S.minText}>Минимум: {h.min}</div>}
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <button style={S.btnSmall} onClick={() => openEditHabit(h)}>
+                  Редактировать
+                </button>
+                <button style={{ ...S.btnSmall, background: "#3A2530" }} onClick={() => deleteHabit(h.id)}>
+                  Удалить
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -429,6 +530,9 @@ export default function GulnurTracker() {
                 {it.text}
               </span>
               <div style={{ display: "flex", gap: 6 }}>
+                <button style={{ ...S.btnSmall, background: "#FF6A2B", color: "#0C1526" }} onClick={() => convertIdeaToHabit(it)}>
+                  → Привычка
+                </button>
                 <button
                   style={S.btnSmall}
                   onClick={() =>
@@ -567,6 +671,13 @@ const S = {
     padding: "9px 16px",
     fontWeight: 600,
     fontSize: 14,
+  },
+  dayChip: {
+    border: "1px solid #33456B",
+    borderRadius: 20,
+    padding: "6px 12px",
+    fontSize: 13,
+    fontWeight: 700,
   },
   btnSmall: {
     background: "#22355A",
