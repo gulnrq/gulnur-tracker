@@ -18,18 +18,19 @@ const addDays = (d, n) => {
   x.setDate(x.getDate() + n);
   return x;
 };
+const fmtDay = (d) => d.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
 
 const DEFAULT_HABITS = [
-  { id: "h1", name: "Strength at the gym", days: [6, 0], min: "20 min: squat + deadlift + negative pull-ups" },
-  { id: "h2", name: "Home mini-session (balance + technique + core)", days: [1, 2, 3, 4, 5], min: "5 min: plank + single-leg balance" },
-  { id: "h3", name: "Protein 3x per day, 25–30 g each", days: [0, 1, 2, 3, 4, 5, 6], min: "At least 2 protein meals" },
-  { id: "h4", name: "Veggie of the day (micro-portion)", days: [0, 1, 2, 3, 4, 5, 6], min: "1 spoon / 2 pieces — just try it" },
-  { id: "h5", name: "Social media — only after the day's tasks", days: [1, 2, 3, 4, 5], min: "Don't open before lunch" },
-  { id: "h6", name: "Guitar 15 min (from phase 2)", days: [0, 1, 2, 3, 4], min: "5 min: one chord change / one riff" },
-  { id: "h7", name: "Order groceries for meal prep", days: [5], min: "Order at least chicken + cottage cheese + grain" },
-  { id: "h8", name: "Laundry", days: [3, 0], min: "Starting the machine counts" },
-  { id: "h9", name: "20-min timed cleanup", days: [6], min: "10 min, kitchen only" },
-  { id: "h10", name: "Creatine 5 g", days: [0, 1, 2, 3, 4, 5, 6], min: "—" },
+  { id: "h1", name: "Strength at the gym", days: [6, 0], min: "20 min: squat + deadlift + negative pull-ups", phase: 1 },
+  { id: "h2", name: "Home mini-session (balance + technique + core)", days: [1, 2, 3, 4, 5], min: "5 min: plank + single-leg balance", phase: 1 },
+  { id: "h3", name: "Protein 3x per day, 25–30 g each", days: [0, 1, 2, 3, 4, 5, 6], min: "At least 2 protein meals", phase: 1 },
+  { id: "h4", name: "Veggie of the day (micro-portion)", days: [0, 1, 2, 3, 4, 5, 6], min: "1 spoon / 2 pieces — just try it", phase: 1 },
+  { id: "h5", name: "Social media — only after the day's tasks", days: [1, 2, 3, 4, 5], min: "Don't open before lunch", phase: 3 },
+  { id: "h6", name: "Guitar 15 min (from phase 2)", days: [0, 1, 2, 3, 4], min: "5 min: one chord change / one riff", phase: 2 },
+  { id: "h7", name: "Order groceries for meal prep", days: [5], min: "Order at least chicken + cottage cheese + grain", phase: 2 },
+  { id: "h8", name: "Laundry", days: [3, 0], min: "Starting the machine counts", phase: 2 },
+  { id: "h9", name: "20-min timed cleanup", days: [6], min: "10 min, kitchen only", phase: 2 },
+  { id: "h10", name: "Creatine 5 g", days: [0, 1, 2, 3, 4, 5, 6], min: "—", phase: 1 },
 ];
 
 const WEEK_PLAN = [
@@ -110,16 +111,18 @@ const VEGGIE_LADDER = [
   "Level 4 — Separate side dish: roasted broccoli with cheese, green beans with garlic",
   "Level 5 — Fresh: cucumber with salt, cherry tomatoes, carrot sticks with hummus",
 ];
+const VEGGIE_SHORT = ["hidden", "roasted", "visible in dish", "separate side", "fresh"];
+const VEGGIE_HABIT_ID = "h4";
 
 const STORAGE_KEY = "gt-data-v1";
 const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0]; // Mon..Sun
-const emptyHabitForm = { id: null, name: "", days: [], min: "" };
+const emptyHabitForm = { id: null, name: "", days: [], min: "", phase: 1 };
+const MAX_BACK_DAYS = 7;
 
 const TABS = [
   ["today", "Today"],
   ["plan", "Plan"],
   ["habits", "Habits"],
-  ["veggie", "Veggies"],
   ["ideas", "Ideas"],
   ["rules", "Rules"],
 ];
@@ -130,6 +133,9 @@ export default function GulnurTracker() {
   const [ideaText, setIdeaText] = useState("");
   const [saveState, setSaveState] = useState("");
   const [habitForm, setHabitForm] = useState(null); // null = closed, else emptyHabitForm-shaped
+  const [dayOffset, setDayOffset] = useState(0); // 0 = today, negative = past
+  const [showUpcoming, setShowUpcoming] = useState(false);
+  const [veggieExpanded, setVeggieExpanded] = useState(false);
 
   // ---------- swipe ----------
   const trackRef = useRef(null);
@@ -172,20 +178,32 @@ export default function GulnurTracker() {
     setDragX(0);
   };
 
-  // ---------- load ----------
+  // ---------- load (with migration) ----------
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       const parsed = JSON.parse(raw);
-      const ids = new Set(parsed.habits.map((h) => h.id));
-      const merged = [...parsed.habits, ...DEFAULT_HABITS.filter((h) => !ids.has(h.id))];
-      setData({ ...parsed, habits: merged });
+      const withPhase = parsed.habits.map((h) => {
+        if (h.phase) return h;
+        const def = DEFAULT_HABITS.find((d) => d.id === h.id);
+        return { ...h, phase: def ? def.phase : 1 };
+      });
+      const ids = new Set(withPhase.map((h) => h.id));
+      const merged = [...withPhase, ...DEFAULT_HABITS.filter((h) => !ids.has(h.id))];
+      setData({
+        ...parsed,
+        habits: merged,
+        // pre-existing installs had no phase gating — unlock everything so nothing suddenly disappears
+        currentPhase: parsed.currentPhase ?? 3,
+        veggieLevel: parsed.veggieLevel ?? 1,
+      });
     } catch {
       setData({
         habits: DEFAULT_HABITS,
         log: {},
         ideas: [],
         veggieLevel: 1,
+        currentPhase: 1,
         startDate: todayISO(),
       });
     }
@@ -215,11 +233,12 @@ export default function GulnurTracker() {
   const weekStart = startOfWeek(now);
   const weekDates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
+  const isHabitActive = (h) => (h.phase ?? 1) <= data.currentPhase;
   const habitsForDate = (d) => data.habits.filter((h) => h.days.includes(d.getDay()));
 
   const dayScore = (d) => {
     const iso = todayISO(d);
-    const hs = habitsForDate(d);
+    const hs = habitsForDate(d).filter(isHabitActive);
     if (!hs.length) return { done: 0, total: 0 };
     const done = hs.filter((h) => data.log[iso]?.[h.id]).length;
     return { done, total: hs.length };
@@ -234,7 +253,7 @@ export default function GulnurTracker() {
       total += s.total;
     }
     let planned = 0;
-    for (const d of weekDates) planned += habitsForDate(d).length;
+    for (const d of weekDates) planned += habitsForDate(d).filter(isHabitActive).length;
     return { done, total, planned, pct: planned ? Math.round((done / planned) * 100) : 0 };
   })();
 
@@ -254,17 +273,17 @@ export default function GulnurTracker() {
     return s;
   })();
 
-  const toggle = (habitId, mode) => {
+  const toggle = (iso, habitId, mode) => {
     const log = { ...data.log };
-    const day = { ...(log[tISO] || {}) };
+    const day = { ...(log[iso] || {}) };
     day[habitId] = day[habitId] === mode ? null : mode;
     if (!day[habitId]) delete day[habitId];
-    log[tISO] = day;
+    log[iso] = day;
     persist({ ...data, log });
   };
 
   const openNewHabit = (prefillName = "") => setHabitForm({ ...emptyHabitForm, name: prefillName });
-  const openEditHabit = (h) => setHabitForm({ id: h.id, name: h.name, days: [...h.days], min: h.min });
+  const openEditHabit = (h) => setHabitForm({ id: h.id, name: h.name, days: [...h.days], min: h.min, phase: h.phase ?? 1 });
   const closeHabitForm = () => setHabitForm(null);
   const toggleFormDay = (day) => {
     setHabitForm((f) => ({
@@ -278,7 +297,7 @@ export default function GulnurTracker() {
     if (clean.id) {
       persist({ ...data, habits: data.habits.map((h) => (h.id === clean.id ? { ...h, ...clean } : h)) });
     } else {
-      persist({ ...data, habits: [...data.habits, { id: `h${Date.now()}`, name: clean.name, days: clean.days, min: clean.min }] });
+      persist({ ...data, habits: [...data.habits, { id: `h${Date.now()}`, name: clean.name, days: clean.days, min: clean.min, phase: clean.phase }] });
     }
     setHabitForm(null);
   };
@@ -291,11 +310,21 @@ export default function GulnurTracker() {
     setHabitForm({ ...emptyHabitForm, name: idea.text });
   };
 
-  const todayHabits = habitsForDate(now);
-  const todayDone = todayHabits.filter((h) => data.log[tISO]?.[h.id]).length;
+  const goPrevDay = () => setDayOffset((o) => Math.max(-MAX_BACK_DAYS, o - 1));
+  const goNextDay = () => setDayOffset((o) => Math.min(0, o + 1));
+  const goToday = () => setDayOffset(0);
+
+  const viewDate = addDays(now, dayOffset);
+  const viewISO = todayISO(viewDate);
+  const isViewingToday = dayOffset === 0;
+
+  const allViewHabits = habitsForDate(viewDate);
+  const activeViewHabits = allViewHabits.filter(isHabitActive);
+  const upcomingViewHabits = allViewHabits.filter((h) => !isHabitActive(h));
+  const viewDoneCount = activeViewHabits.filter((h) => data.log[viewISO]?.[h.id]).length;
+  const missedView = activeViewHabits.length - viewDoneCount;
 
   const rewardUnlocked = weekStats.pct >= 80;
-  const missedToday = todayHabits.length - todayDone;
 
   // ---------- UI ----------
   return (
@@ -304,6 +333,7 @@ export default function GulnurTracker() {
         @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&family=Manrope:wght@400;600;800&display=swap');
         * { box-sizing: border-box; }
         button { cursor: pointer; }
+        button:disabled { cursor: default; opacity: 0.3; }
         @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
       `}</style>
 
@@ -383,27 +413,81 @@ export default function GulnurTracker() {
           {/* TODAY */}
           <div style={S.swipePanel}>
             <div style={S.section}>
-              {todayHabits.length === 0 && (
-                <div style={S.card}>Recovery day today — no tasks. Streak stays intact.</div>
+              <div style={S.dayNavRow}>
+                <button style={S.dayNavBtn} onClick={goPrevDay} disabled={dayOffset <= -MAX_BACK_DAYS}>
+                  ←
+                </button>
+                <div style={S.dayNavLabel}>{fmtDay(viewDate)}</div>
+                <button style={S.dayNavBtn} onClick={goNextDay} disabled={dayOffset >= 0}>
+                  →
+                </button>
+              </div>
+              {!isViewingToday && (
+                <div style={S.editingBanner}>
+                  <span>✏️ Editing {fmtDay(viewDate)}</span>
+                  <button style={S.btnSmall} onClick={goToday}>
+                    Today
+                  </button>
+                </div>
               )}
-              {todayHabits.map((h) => {
-                const state = data.log[tISO]?.[h.id];
+
+              {activeViewHabits.length === 0 && (
+                <div style={S.card}>Recovery day — no tasks. Streak stays intact.</div>
+              )}
+              {activeViewHabits.map((h) => {
+                const state = data.log[viewISO]?.[h.id];
+                const isVeggie = h.id === VEGGIE_HABIT_ID;
                 return (
                   <div key={h.id} style={{ ...S.card, opacity: state ? 0.75 : 1 }}>
-                    <div style={S.habitName}>
-                      {state === "full" ? "✅ " : state === "min" ? "🟡 " : ""}
-                      {h.name}
+                    <div
+                      style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", cursor: isVeggie ? "pointer" : "default" }}
+                      onClick={() => isVeggie && setVeggieExpanded((v) => !v)}
+                    >
+                      <div>
+                        <div style={S.habitName}>
+                          {state === "full" ? "✅ " : state === "min" ? "🟡 " : ""}
+                          {h.name}
+                        </div>
+                        <div style={S.minText}>
+                          Minimum: {h.min}
+                          {isVeggie && ` · Level ${data.veggieLevel}: ${VEGGIE_SHORT[data.veggieLevel - 1]}`}
+                        </div>
+                      </div>
+                      {isVeggie && <span style={S.infoIcon}>{veggieExpanded ? "▲" : "ⓘ"}</span>}
                     </div>
-                    <div style={S.minText}>Minimum: {h.min}</div>
+                    {isVeggie && veggieExpanded && (
+                      <div style={S.veggieDetail} onClick={(e) => e.stopPropagation()}>
+                        {VEGGIE_LADDER.map((v, i) => (
+                          <div
+                            key={i}
+                            style={{
+                              ...S.veggieStep,
+                              borderLeft: `4px solid ${i + 1 < data.veggieLevel ? "#2E7D4F" : i + 1 === data.veggieLevel ? "#FF6A2B" : "#33456B"}`,
+                              opacity: i + 1 > data.veggieLevel ? 0.55 : 1,
+                            }}
+                          >
+                            {v}
+                          </div>
+                        ))}
+                        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                          <button style={S.btnSmall} onClick={() => persist({ ...data, veggieLevel: Math.min(5, data.veggieLevel + 1) })}>
+                            Level complete →
+                          </button>
+                          <button style={S.btnSmall} onClick={() => persist({ ...data, veggieLevel: Math.max(1, data.veggieLevel - 1) })}>
+                            ← Back
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                       <button
-                        onClick={() => toggle(h.id, "full")}
+                        onClick={() => toggle(viewISO, h.id, "full")}
                         style={{ ...S.btn, background: state === "full" ? "#FF6A2B" : "#22355A" }}
                       >
                         Done
                       </button>
                       <button
-                        onClick={() => toggle(h.id, "min")}
+                        onClick={() => toggle(viewISO, h.id, "min")}
                         style={{ ...S.btnGhost, borderColor: state === "min" ? "#D9A441" : "#33456B" }}
                       >
                         Minimum
@@ -412,9 +496,31 @@ export default function GulnurTracker() {
                   </div>
                 );
               })}
-              {missedToday === 0 && todayHabits.length > 0 && (
+              {missedView === 0 && activeViewHabits.length > 0 && (
                 <div style={{ ...S.card, background: "#173325", border: "1px solid #2E7D4F" }}>
                   Perfect day. This is what someone who won't recognize themselves in a year's photo looks like.
+                </div>
+              )}
+
+              {upcomingViewHabits.length > 0 && (
+                <div style={S.card}>
+                  <div
+                    style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}
+                    onClick={() => setShowUpcoming((v) => !v)}
+                  >
+                    <div style={S.habitName}>🔒 Coming soon ({upcomingViewHabits.length})</div>
+                    <span>{showUpcoming ? "▲" : "▼"}</span>
+                  </div>
+                  {showUpcoming && (
+                    <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                      {upcomingViewHabits.map((h) => (
+                        <div key={h.id} style={S.upcomingRow}>
+                          <span>🔒 {h.name}</span>
+                          <span style={S.minText}>Phase {h.phase ?? 1}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -424,9 +530,31 @@ export default function GulnurTracker() {
           <div style={S.swipePanel}>
             <div style={S.section}>
               <div style={{ ...S.card, borderLeft: "4px solid #FF6A2B" }}>
+                <div style={S.habitName}>Current phase: {data.currentPhase}/3</div>
+                <div style={{ ...S.minText, marginTop: 4 }}>
+                  Switch phases to unlock more habits as you're ready. Habits in future phases stay in the "Coming soon" list on Today and don't count toward the weekly score.
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                  {[1, 2, 3].map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => persist({ ...data, currentPhase: p })}
+                      style={{
+                        ...S.dayChip,
+                        background: data.currentPhase === p ? "#FF6A2B" : "transparent",
+                        color: data.currentPhase === p ? "#0C1526" : "#F2F0E9",
+                        borderColor: data.currentPhase === p ? "#FF6A2B" : "#33456B",
+                      }}
+                    >
+                      Phase {p}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ ...S.card, borderLeft: "4px solid #FF6A2B" }}>
                 <div style={S.habitName}>Rollout phases</div>
                 <div style={{ ...S.minText, marginTop: 4 }}>
-                  Weeks 1–2: workouts + protein + veggies. Weeks 3–4: + guitar and meal prep. Week 5+: + strict social media rule. Not all at once — otherwise everything breaks.
+                  Phase 1: workouts + protein + veggies + creatine. Phase 2: + guitar and meal prep, laundry, cleanup. Phase 3: + strict social media rule. Not all at once — otherwise everything breaks.
                 </div>
               </div>
               {WEEK_PLAN.map((d, i) => (
@@ -476,6 +604,23 @@ export default function GulnurTracker() {
                     placeholder="Minimum version (fallback text)"
                     style={{ ...S.input, width: "100%", marginTop: 10 }}
                   />
+                  <div style={{ ...S.minText, marginTop: 10 }}>Phase</div>
+                  <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                    {[1, 2, 3].map((p) => (
+                      <button
+                        key={p}
+                        onClick={() => setHabitForm({ ...habitForm, phase: p })}
+                        style={{
+                          ...S.dayChip,
+                          background: habitForm.phase === p ? "#FF6A2B" : "transparent",
+                          color: habitForm.phase === p ? "#0C1526" : "#F2F0E9",
+                          borderColor: habitForm.phase === p ? "#FF6A2B" : "#33456B",
+                        }}
+                      >
+                        Phase {p}
+                      </button>
+                    ))}
+                  </div>
                   <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
                     <button style={S.btn} onClick={saveHabitForm}>
                       {habitForm.id ? "Save" : "Create"}
@@ -493,7 +638,10 @@ export default function GulnurTracker() {
               )}
               {data.habits.map((h) => (
                 <div key={h.id} style={S.card}>
-                  <div style={S.habitName}>{h.name}</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div style={S.habitName}>{h.name}</div>
+                    <span style={S.phaseTag}>Phase {h.phase ?? 1}</span>
+                  </div>
                   <div style={{ ...S.minText, marginTop: 4 }}>
                     Days: {DAY_ORDER.filter((d) => h.days.includes(d)).map((d) => DAYS[d]).join(", ") || "—"}
                   </div>
@@ -508,45 +656,6 @@ export default function GulnurTracker() {
                   </div>
                 </div>
               ))}
-            </div>
-          </div>
-
-          {/* VEGGIE */}
-          <div style={S.swipePanel}>
-            <div style={S.section}>
-              <div style={S.card}>
-                <div style={S.habitName}>Veggie ladder — level {data.veggieLevel} of 5</div>
-                <div style={{ ...S.minText, marginTop: 6 }}>
-                  Rule: a micro-portion every day. Same veggie 8–10 times, then decide — keep it or swap it.
-                  Move to the next level once the current one stops causing resistance (usually 2–3 weeks).
-                </div>
-              </div>
-              {VEGGIE_LADDER.map((v, i) => (
-                <div
-                  key={i}
-                  style={{
-                    ...S.card,
-                    borderLeft: `4px solid ${i + 1 < data.veggieLevel ? "#2E7D4F" : i + 1 === data.veggieLevel ? "#FF6A2B" : "#33456B"}`,
-                    opacity: i + 1 > data.veggieLevel ? 0.55 : 1,
-                  }}
-                >
-                  {v}
-                </div>
-              ))}
-              <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  style={S.btn}
-                  onClick={() => persist({ ...data, veggieLevel: Math.min(5, data.veggieLevel + 1) })}
-                >
-                  Level complete →
-                </button>
-                <button
-                  style={S.btnGhost}
-                  onClick={() => persist({ ...data, veggieLevel: Math.max(1, data.veggieLevel - 1) })}
-                >
-                  ← Back
-                </button>
-              </div>
             </div>
           </div>
 
@@ -756,5 +865,63 @@ const S = {
     padding: "9px 12px",
     fontSize: 14,
     fontFamily: "'Manrope', sans-serif",
+  },
+  dayNavRow: { display: "flex", alignItems: "center", justifyContent: "space-between" },
+  dayNavBtn: {
+    background: "#22355A",
+    color: "#F2F0E9",
+    border: "none",
+    borderRadius: 8,
+    padding: "8px 14px",
+    fontSize: 16,
+    fontWeight: 700,
+  },
+  dayNavLabel: {
+    fontFamily: "'Oswald', sans-serif",
+    fontSize: 14,
+    letterSpacing: "0.04em",
+    color: "#F2F0E9",
+  },
+  editingBanner: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    background: "#3A2E10",
+    border: "1px solid #D9A441",
+    color: "#D9A441",
+    borderRadius: 10,
+    padding: "8px 12px",
+    fontSize: 13,
+    fontWeight: 700,
+  },
+  infoIcon: { color: "#8A93A6", fontSize: 14, marginLeft: 8 },
+  veggieDetail: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTop: "1px solid #22355A",
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+  },
+  veggieStep: {
+    background: "#0C1526",
+    borderRadius: 8,
+    padding: "8px 10px",
+    fontSize: 13,
+    color: "#C9CFDB",
+  },
+  upcomingRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    fontSize: 13.5,
+    color: "#C9CFDB",
+  },
+  phaseTag: {
+    fontSize: 11,
+    color: "#8A93A6",
+    border: "1px solid #33456B",
+    borderRadius: 20,
+    padding: "3px 8px",
+    whiteSpace: "nowrap",
   },
 };
